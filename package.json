@@ -10,6 +10,7 @@
   "author": "Finn Pauls",
   "license": "MIT",
   "dependencies": {
+    "cat-ascii-faces": "^2.0.0",
     "concat-stream": "^1.4.7",
     "github-webhook-handler": "^0.3.4",
     "request": "^2.51.0"

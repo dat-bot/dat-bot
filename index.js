@@ -4,6 +4,7 @@ var request = require('request')
 var path = require('path')
 var exec = require('child_process').exec
 var concat = require('concat-stream')
+var cats = require('cat-ascii-faces')
 
 var PORT = process.env['PORT'] || 8080
 var SECRET = process.env['SECRET'] || 'default'
@@ -30,7 +31,9 @@ http.createServer(function(req, res) {
 webhook.on('issue_comment', function (data) {
   console.log('event: issue_comment')
   var comment = data.payload.comment.body
-  if(comment.indexOf('@' + ghname) === -1) return // not for me
+  var pos = comment.indexOf('@' + ghname)
+  if(pos === -1) return // not for me
+  comment = comment.slice(pos + ghname.length + 1)
   var issueUrl = data.payload.comment.issue_url
   var username = data.payload.comment.user.login
 
@@ -38,6 +41,8 @@ webhook.on('issue_comment', function (data) {
   if(match) {
     var versionStep = match[1]
     publishNewVersion(versionStep, postComment)
+  } else if(comment.match(/cat/)) {
+    postComment(cats())
   } else {  
     postComment('Hello, my friend!')
   }
@@ -49,7 +54,7 @@ webhook.on('issue_comment', function (data) {
       json: {body: '@' + username + ' ' + message},
       headers: ghheaders
     }, 
-    function (err, res) {
+    function (err, res, body) {
       if(err) console.error(err)
     })
   }
