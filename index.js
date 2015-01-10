@@ -34,9 +34,6 @@ webhook.on('issue_comment', function (data) {
   var pos = comment.indexOf('@' + ghname)
   if(pos === -1) return // not for me
   comment = comment.slice(pos + ghname.length + 1)
-  var issueUrl = data.payload.comment.issue_url
-  var user = data.payload.comment.user
-  var username = user.login
 
   var match = comment.match(/publish (major|minor|patch)/)
   if(match) {
@@ -50,8 +47,8 @@ webhook.on('issue_comment', function (data) {
   function postComment(message) {
     // post comment
     request.post({
-      url: issueUrl + '/comments',
-      json: {body: '@' + username + ' ' + message},
+      url: data.payload.comment.issue_url + '/comments',
+      json: {body: '@' + data.payload.comment.user.login + ' ' + message},
       headers: ghheaders
     }, 
     function (err, res, body) {
@@ -65,20 +62,32 @@ function mdcode(test) {
 }
 
 function publishNewVersion(data, versionStep, comment) {
+  var checkCollaborator = data.payload.repository.collaborators_url.replace('{/collaborator}', '/' + data.payload.comment.user.login)
   var repo = data.payload.repository.full_name
   var repoDir = path.join(__dirname, 'repos', repo)
-  fs.exists(repoDir, function (exists) {
-    if(exists) return checkPR()
-    var cloneURL = data.payload.repository.clone_url
-    
-    exec(['git clone ', cloneURL, repoDir].join(' '), {cwd: __dirname}, function (err, stdout, stderr) {
-      if(err) return comment('There has been a problem cloning the directory' + mdcode(stderr))
-      console.log(stdout)
-      // checks for publishing rights and push rights?
-      checkPR()
-    })
-    
+
+  request({url: checkCollaborator, headers: ghheaders}, function (err, res) {
+    if(err) return comment('Problem with GitHub: ' + err) 
+    if(res.statusCode !== 204) return comment('Sorry, it seems like you are not a collaborator.')
+    checkLocalRepo()
   })
+  
+  
+  function checkLocalRepo() {
+    fs.exists(repoDir, function (exists) {
+      if(exists) return checkPR()
+      var cloneURL = data.payload.repository.clone_url
+      
+      exec(['git clone ', cloneURL, repoDir].join(' '), {cwd: __dirname}, function (err, stdout, stderr) {
+        if(err) return comment('There has been a problem cloning the directory' + mdcode(stderr))
+        console.log(stdout)
+        // checks for publishing rights and push rights?
+        checkPR()
+      })
+      
+    })
+  }
+  
   
   function checkPR() {
     var pr = data.payload.issue.pull_request
