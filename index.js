@@ -9,6 +9,7 @@ var cats = require('cat-ascii-faces')
 var waterfall = require('run-waterfall')
 var readjson = require('readjson')
 var gitHead = require('./githead.js')
+var minimist = require('minimist')
 
 var PORT = process.env['PORT'] || 8080
 var SECRET = process.env['SECRET'] || 'default'
@@ -40,10 +41,11 @@ webhook.on('issue_comment', function (data) {
   if(pos === -1) return // not for me
   comment = comment.slice(pos + ghname.length + 1)
 
-  var match = comment.match(/publish (major|minor|patch)/)
+  var match = comment.match(/publish (major|minor|patch)(.*)/)
   if(match) {
     var versionStep = match[1]
-    return publishNewVersion(data, versionStep, postComment)
+    var options = minimist((match[2] || '').split(/\s+/))
+    return publishNewVersion(data, versionStep, postComment, options)
   }  
   if(comment.match(/cat/)) {
     return postComment(cats())
@@ -66,7 +68,7 @@ function mdcode(test) {
   return '\n```\n' + test + '\n```\n'
 }
 
-function publishNewVersion(data, versionStep, comment) {
+function publishNewVersion(data, versionStep, comment, opts) {
   var repo = data.payload.repository.full_name
   var repoDir = path.join(__dirname, 'repos', repo)
 
@@ -110,6 +112,7 @@ function publishNewVersion(data, versionStep, comment) {
   
   function checkClean(cb) {
     // Check if there are no new changes in between
+    if(opts['force']) return cb()
     readjson(path.join(repoDir, 'package.json'), function (err, info) {
       if(err) return cb(err)
       var moduleName = info.name
@@ -122,7 +125,8 @@ function publishNewVersion(data, versionStep, comment) {
             if(body.object.sha !== commit) {
               cb(new Error(
                 'There are unpublished changes in the repo. Here is the complete diff: ' +
-                'https://github.com/' + repo + '/compare/' + commit + '...master'
+                'https://github.com/' + repo + '/compare/' + commit + '...master\n' +
+                'If you are okay with it run command again with `--force`'
                 )
               )
             } else {
