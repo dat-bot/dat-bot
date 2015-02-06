@@ -6,6 +6,7 @@ var path = require('path')
 var exec = require('child_process').exec
 var concat = require('concat-stream')
 var cats = require('cat-ascii-faces')
+var waterfall = require('run-waterfall')
 
 var PORT = process.env['PORT'] || 8080
 var SECRET = process.env['SECRET'] || 'default'
@@ -62,64 +63,70 @@ function mdcode(test) {
 }
 
 function publishNewVersion(data, versionStep, comment) {
-  var checkCollaborator = data.payload.repository.collaborators_url.replace('{/collaborator}', '/' + data.payload.comment.user.login)
   var repo = data.payload.repository.full_name
   var repoDir = path.join(__dirname, 'repos', repo)
 
-  request({url: checkCollaborator, headers: ghheaders}, function (err, res) {
-    if(err) return comment('Problem with GitHub: ' + err) 
-    if(res.statusCode !== 204) return comment('Sorry, it seems like you are not a collaborator.')
-    checkLocalRepo()
+  waterfall([
+    checkCollaborator,
+    checkLocalRepo,
+    checkPR,
+    runPublish
+  ],
+  function (err) {
+    if(err) comment(err.message)
   })
+
+
+  function checkCollaborator(cb) {
+    var checkCollaboratorUrl = data.payload.repository.collaborators_url.replace('{/collaborator}', '/' + data.payload.comment.user.login)
+    request({url: checkCollaboratorUrl, headers: ghheaders}, function (err, res) {
+      if(err) return comment('Problem with GitHub: ' + err) 
+      if(res.statusCode !== 204) return cb(new Error('Sorry, it seems like you are not a collaborator.'))
+      cb()
+    })
+  }
+
   
   
-  function checkLocalRepo() {
+  function checkLocalRepo(cb) {
     fs.exists(repoDir, function (exists) {
-      if(exists) return checkPR()
+      if(exists) return cb()
       var cloneURL = data.payload.repository.clone_url
       
       exec(['git clone ', cloneURL, repoDir].join(' '), {cwd: __dirname}, function (err, stdout, stderr) {
-        if(err) return comment('There has been a problem cloning the directory' + mdcode(stderr))
+        if(err) return cb(new Error('There has been a problem cloning the directory' + mdcode(stderr)))
         console.log(stdout)
         // checks for publishing rights and push rights?
-        checkPR()
+        cb()
       })
       
     })
   }
   
   
-  function checkPR() {
+  function checkPR(cb) {
     var pr = data.payload.issue.pull_request
     if(pr) {
       var mergeUrl = pr.url + '/merge'
       console.log('Trying to merge ' + mergeUrl)
       request.put({url: mergeUrl, headers: ghheaders, json: {}}, function (err, res, body) {
-        if(err) return comment('Oops there was a problem: ' + err)
-        if(!body.merged) return comment('I could not merge this, because GitHub said: ' + body.message)
-        runPublish()
+        if(err) return cb(new Error('Oops there was a problem: ' + err))
+        if(!body.merged) return cb(new Error('I could not merge this, because GitHub said: ' + body.message))
+        cb()
       })
     } else {
-      runPublish()
+      cb()
     }
   }
   
-  function runPublish() {
+  function runPublish(cb) {
     var cmd = path.join(__dirname, 'publish.sh') + ' ' + versionStep
-    exec(cmd, {cwd: repoDir}, donePublish)
-  }
-  
-  
-  function donePublish(err, stdout, stderr) {
-    console.log(stdout)
-    if(err) {
-      var message
-      message = 'Sorry, it seems like there was a problem.\n'
-      message += 'Here is the stderr output:\n```\n' + stderr + '\n```\n'
-      comment(message)
-    } else {
-      comment('Published version ' + (stdout.match(/v\d+\.\d+\.\d+/) || ['error!'])[0])
-    }
+    exec(cmd, {cwd: repoDir}, function (err, stdout, stderr) {
+        if(err) return cb(new Error('There has been a problem: ' + mdcode(stderr)))
+        console.log(stdout)
+        comment('Published version ' + (stdout.match(/v\d+\.\d+\.\d+/) || ['error!'])[0])
+        cb()
+    })
   }
   
 }
