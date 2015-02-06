@@ -7,6 +7,8 @@ var exec = require('child_process').exec
 var concat = require('concat-stream')
 var cats = require('cat-ascii-faces')
 var waterfall = require('run-waterfall')
+var readjson = require('readjson')
+var gitHead = require('./githead.js')
 
 var PORT = process.env['PORT'] || 8080
 var SECRET = process.env['SECRET'] || 'default'
@@ -26,6 +28,8 @@ http.createServer(function(req, res) {
     res.end('404')
   })
 }).listen(PORT)
+
+console.log('Listening on port ' + PORT)
 
 
 webhook.on('issue_comment', function (data) {
@@ -69,7 +73,8 @@ function publishNewVersion(data, versionStep, comment) {
   waterfall([
     checkCollaborator,
     checkLocalRepo,
-    checkPR,
+    checkClean,
+    mergePR,
     runPublish
   ],
   function (err) {
@@ -103,8 +108,35 @@ function publishNewVersion(data, versionStep, comment) {
     })
   }
   
+  function checkClean(cb) {
+    // Check if there are no new changes in between
+    readjson(path.join(repoDir, 'package.json'), function (err, info) {
+      if(err) return cb(err)
+      var moduleName = info.name
+      gitHead(info.name, function (err, commit) {
+        if(err) return cb(err)
+        var masterUrl = 'https://api.github.com/repos/' + repo + '/git/refs/heads/master'
+        request({url: masterUrl, json: true, headers: ghheaders}, function (err, resp, body) {
+          if(err) return cb(err)
+          if(body.object && body.object.sha) {
+            if(body.object.sha !== commit) {
+              cb(new Error(
+                'There are unpublished changes in the repo. Here is the complete diff: ' +
+                'https://github.com/' + repo + '/compare/' + commit + '...master'
+                )
+              )
+            } else {
+              cb()
+            }
+          } else {
+            cb(new Error('failed to fetch head'))
+          }
+        })
+      })
+    })
+  }  
   
-  function checkPR(cb) {
+  function mergePR(cb) {
     var pr = data.payload.issue.pull_request
     if(pr) {
       var mergeUrl = pr.url + '/merge'
@@ -118,6 +150,7 @@ function publishNewVersion(data, versionStep, comment) {
       cb()
     }
   }
+  
   
   function runPublish(cb) {
     var cmd = path.join(__dirname, 'publish.sh') + ' ' + versionStep
